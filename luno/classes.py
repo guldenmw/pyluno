@@ -10,12 +10,12 @@ from websocket import create_connection, WebSocketTimeoutException
 
 # from websocket import WebSocketConnectionClosedException
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARNING)
 log = logging.getLogger(__name__)
 
 # fh = logging.FileHandler('LunoStream.log')
 # fh.setLevel(logging.DEBUG)
-log.setLevel(logging.INFO)
+# log.setLevel(logging.DEBUG)
 
 
 class Stream(object):
@@ -25,17 +25,22 @@ class Stream(object):
         self.key = key
         self.__secret = secret
 
-        self.bids = []
-        self.asks = []
-        self.trades = []
-        self.addr = ''
+        self.bids = None
+        self.asks = None
+        self._trade_history = []
+
+        self._trades = None
+        self._ticker = None
+        self._order_book = None
+
+        self.addr = None
         self.conn = None
-        self.channels = {}
+        # self.channels = {}
 
         if not key or not secret and not creds:
             self._handle_creds(path_to_creds)
 
-        self._handle_configs()
+        # self._handle_configs()
 
     def _handle_creds(self, path_to_creds):
         if not path_to_creds:
@@ -66,11 +71,11 @@ class Stream(object):
         self.conn.close()
         self.conn = None
 
-    def _handle_configs(self):
-        from yaml import load
-        with open("config.yaml", 'r') as read:
-            configs = load(read)
-        self.channels = configs['channels']
+    # def _handle_configs(self):
+    #     from yaml import load
+    #     with open("config.yaml", 'r') as read:
+    #         configs = load(read)
+    #     self.channels = configs['channels']
 
     def _connect(self):
         function_name = inspect.stack()[0][3]
@@ -103,27 +108,12 @@ class Stream(object):
     #         self.bids.update({ask['id']: {"price": ask['price'],
     #                                       "volume": ask['volume']}})
 
-    def fetch_order(self, order_id):
-        function_name = inspect.stack()[0][3]
-        log.debug(function_name)  # Log function name upon execution
-
-        if order_id in self.bids:
-            order = self.bids[order_id]
-            location = "bids"
-        elif order_id in self.asks:
-            order = self.asks[order_id]
-            location = "asks"
-        else:
-            return False, False
-
-        return order, location
-
     def _update_order(self, new_order):
         function_name = inspect.stack()[0][3]
         log.debug(function_name)  # Log function name upon execution
 
         order_id = new_order['order_id']
-        old_order, location = self.fetch_order(order_id)
+        old_order, index, location = self.fetch_order(order_id)
 
         if not old_order:
             return False
@@ -141,38 +131,31 @@ class Stream(object):
 
         new_info = {"volume": new_volume}
 
-        eval("self.{}['{}'].update({})".format(location, order_id, new_info))
+        eval("self.{}[{}].update({})".format(location, index, new_info))
         return True
-
-    def _handle_subscriptions(self, order, order_type):
-        if order_type == "trade":
-            if self.channels["order_book"] or self.channels["ticker"]:
-
-        elif self.channels["order_book"]:
-            return self.order_book
-
-    def ticker(self):
-        self.channels.update({"ticker": True)
-
-    def trades(self):
-        self.channels.update({"trades": True)
-
-    def order_book(self):
-        self.channels.update({"order_book": True)
-
 
     def _add_order(self, order):
         function_name = inspect.stack()[0][3]
         log.debug(function_name)  # Log function name upon execution
 
-        order_info = {order['create_update']['order_id']: {"price": order['create_update']['price'],
-                                                           "volume": order['create_update']['volume']}}
+        order_info = {"id": order['create_update']['order_id'],
+                      "price": order['create_update']['price'],
+                      "volume": order['create_update']['volume']}
+        previous_index = 0
 
         if order['create_update']['type'] == 'BID':
-            self.bids.update(order_info)
+            previous = [i for i in self.bids if float(i['price']) <= float(order_info['price'])]
+            if previous:
+                previous_index = self.bids.index(previous[-1]) + 1
+
+            self.bids.insert(previous_index, order_info)
 
         elif order['create_update']['type'] == 'ASK':
-            self.asks.update(order_info)
+            previous = [i for i in self.asks if float(i['price']) <= float(order_info['price'])]
+            if previous:
+                previous_index = self.asks.index(previous[-1]) + 1
+
+            self.asks.insert(previous_index, order_info)
 
         log.debug("\nOrder {} added to {}s.\n".format(order['create_update']['order_id'],
                                                       order['create_update']['type'].lower()))
@@ -183,10 +166,13 @@ class Stream(object):
         function_name = inspect.stack()[0][3]
         log.debug(function_name)  # Log function name upon execution
 
-        order, location = self.fetch_order(order_id)
+        order, index, location = self.fetch_order(order_id)
+
+        # if not order:
+
 
         try:
-            eval("self.{}.pop('{}')".format(location, order_id))
+            eval("self.{}.pop({})".format(location, index))
 
         except IndexError:
             log.warning("\nOrder '{}' not found in self.{}.\n".format(order_id, location))
@@ -198,6 +184,7 @@ class Stream(object):
         function_name = inspect.stack()[0][3]
         log.debug(function_name)  # Log function name upon execution
 
+        # for trade in trades:
         self._update_order(trade)
 
         price = float(trade['counter']) / float(trade['base'])
@@ -208,13 +195,72 @@ class Stream(object):
                      "counter": trade["counter"],
                      "timestamp": timestamp}
 
-        self.trades.append(new_trade)
+        self._trade_history.insert(0, new_trade)
+
+        self._trades = new_trade
+        self._ticker = new_trade['price']
 
         log.info("\nNew trade added: \n{}\n".format(pformat(new_trade)))
         return True
 
+    # def _handle_subscriptions(self, order_type):
+    #     if order_type == "trade":
+    #         if self.channels["trades"] and self.channels["ticker"]:
+    #             return [self._trade_history[0], round(self._trade_history[0]['price'], 0)]
+    #
+    #         elif self.channels["trades"]:
+    #             return self._trade_history[0]
+    #
+    #         elif self.channels["ticker"]:
+    #             return round(self._trade_history[0]['price'], 0)
+    #
+    #     elif self.channels["order_book"]:
+    #         return {"bids": self.bids,
+    #                 "asks": self.asks}
+    #
+    # def subscribe(self, channel):
+    #     self.channels[channel] = True
+    #
+    # def get_available_channels(self):
+    #     return [i for i in self.channels.keys()]
+    def ticker(self):
+        return self._ticker
+
+    def trades(self):
+        return self._trades
+
+    def order_book(self):
+        return self._order_book
+
+    def trade_history(self):
+        return self._trade_history
+
+    def fetch_order(self, order_id):
+        function_name = inspect.stack()[0][3]
+        log.debug(function_name)  # Log function name upon execution
+
+        bids_test = [i for i in self.bids if i['id'] == order_id]
+        asks_test = [i for i in self.asks if i['id'] == order_id]
+        log.debug("\nbids_test: \n{}\n\nasks_test: \n{}\n".format(bids_test, asks_test))
+
+        if bids_test:
+            index = self.bids.index(bids_test[0])
+            order = self.bids[index]
+            location = "bids"
+        elif asks_test:
+            index = self.asks.index(asks_test[0])
+            order = self.asks[index]
+            location = "asks"
+        else:
+            return False, False, False
+
+        return order, index, location
+
     def receive(self):
-        return json.loads(self.conn.recv())
+        data = self.conn.recv()
+        if data:
+            return json.loads(data)
+        return
 
     def manager(self, order):
         function_name = inspect.stack()[0][3]
@@ -222,30 +268,32 @@ class Stream(object):
 
         log.debug("\nProcessing new order...\n")
 
-        order_type = None
+        # order_type = None
 
-        # if "asks" in order:
-            # log.info("\nFormatting bids and asks...\n")
-            # self.__format_bids(order['bids'])
-            # self.__format_asks(order['asks'])
+        if "asks" in order:
+            self.bids = order['bids']
+            self.asks = order['asks']
+            self._order_book = {"bids": self.bids,
+                               "asks": self.asks}
             # order_type = "order_book"
+        # log.info("\nFormatting bids and asks...\n")
+        # self.__format_bids(order['bids'])
+        # self.__format_asks(order['asks'])
+        # order_type = "order_book"
 
-        if "create_update" in order:
+        elif "create_update" in order:
             if order["create_update"]:
                 self._add_order(order)
-                order_type = "create_order"
+                # order_type = "create_order"
 
             elif order["delete_update"]:
                 self._remove_order(order['delete_update']['order_id'])
-                order_type = "delete_order"
+                # order_type = "delete_order"
 
             elif order['trade_updates']:
                 for trade in order["trade_updates"]:
                     self._add_trade(trade, order['timestamp'])
-                order_type = "trade"
+                # order_type = "trade"
 
-        else:
-            order_type = "order_book"
-
-        if order_type:
-            return self._handle_subscriptions(order, order_type)
+        # if order_type:
+        #     return self._handle_subscriptions(order_type)
