@@ -1,0 +1,4 @@
+channels:
+  trades: False
+  ticker: False
+  order_book: False
