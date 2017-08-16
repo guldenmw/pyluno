@@ -1,13 +1,10 @@
-import os
-import logging
-from threading import Thread
+import hashlib
 import inspect
 import json
-import time
-import sys
-import hashlib
-
-from pprint import pprint, pformat
+import logging
+import os
+from pprint import pformat
+from threading import Thread
 
 from websocket import create_connection, WebSocketTimeoutException
 
@@ -76,10 +73,10 @@ class Stream(object):
         self.conn = None
 
     def _handle_configs(self):
-        import definitions
+        from luno import definitions
         from yaml import load
 
-        config_path = os.path.join(definitions.MODULE_ROOT, 'config.yaml')
+        config_path = os.path.join(definitions.PROJECT_ROOT, 'config.yaml')
         with open(config_path, 'r') as read:
             configs = load(read)
 
