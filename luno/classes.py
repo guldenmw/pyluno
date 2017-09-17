@@ -45,8 +45,8 @@ class Stream(object):
 
     def _handle_creds(self, path_to_creds):
         if not path_to_creds:
-            home = os.path.expanduser("~")
-            path_to_creds = home + os.sep + "luno.json"
+            # home = os.path.expanduser("~")
+            path_to_creds = os.path.join(os.path.abspath(os.path.dirname(__file__)), "luno.json")
 
         with open(path_to_creds, "r") as read:
             creds = json.load(read)
